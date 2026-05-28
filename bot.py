@@ -23,14 +23,22 @@ def send_telegram(msg):
 # ── BINANCE API ───────────────────────────────────────
 def get_candles(symbol, interval, limit=50):
     try:
-        import ccxt
-        exchange = ccxt.binance()
-        tf_map = {"4h": "4h", "1h": "1h"}
-        ohlcv = exchange.fetch_ohlcv(symbol.replace("USDT", "/USDT"), tf_map[interval], limit=limit)
-        closes = [c[4] for c in ohlcv]
+        interval_map = {"4h": "4h", "1h": "1h"}
+        url = f"https://api.mexc.com/api/v3/klines"
+        params = {
+            "symbol": symbol,
+            "interval": interval_map[interval],
+            "limit": limit
+        }
+        res = requests.get(url, params=params, timeout=15)
+        data = res.json()
+        if not isinstance(data, list):
+            print(f"MEXC error {symbol}: {data}")
+            return []
+        closes = [float(c[4]) for c in data]
         return closes
     except Exception as e:
-        print(f"CCXT error {symbol} {interval}: {e}")
+        print(f"Fetch error {symbol} {interval}: {e}")
         return []
 
 # ── RSI ───────────────────────────────────────────────
