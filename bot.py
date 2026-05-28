@@ -9,7 +9,7 @@ CHAT_ID = "6311790109"
 COINS = [
     "SOLUSDT", "RENDERUSDT", "BTCUSDT", "ETHUSDT",
     "AVAXUSDT", "LINKUSDT", "INJUSDT", "ARBUSDT",
-    "OPUSDT", "MATICUSDT"
+    "OPUSDT", "POLUSDT"
 ]
 
 # ── TELEGRAM ─────────────────────────────────────────
