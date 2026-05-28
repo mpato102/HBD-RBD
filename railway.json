@@ -1,0 +1,9 @@
+{
+  "build": {
+    "builder": "NIXPACKS"
+  },
+  "deploy": {
+    "startCommand": "python bt.py",
+    "restartPolicyType": "ON_FAILURE"
+  }
+}
