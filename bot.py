@@ -271,8 +271,8 @@ def scan():
 
 # ── RUN ───────────────────────────────────────────────
 if __name__ == "__main__":
-    send_telegram("🤖 <b>RSI Signal Bot Started!</b>\nScanning coins...")
+    send_telegram("🤖 <b>Signal Bot Started!</b>\nScanning coins...")
     while True:
         scan()
-        print("⏳ 4 saac sugaya...")
+        print("⏳ waa inoo 4 saac kadib...")
         time.sleep(14400)
