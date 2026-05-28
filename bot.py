@@ -24,7 +24,7 @@ def send_telegram(msg):
 def get_candles(symbol, interval, limit=50):
     try:
         # MEXC interval format
-        interval_map = {"4h": "4h", "1h": "60m", "15m": "15m"}
+        interval_map = {"4h": "4h", "1h": "60m", "15m": "15m", "5m": "5m"}
         url = "https://api.mexc.com/api/v3/klines"
         params = {
             "symbol": symbol,
@@ -107,52 +107,162 @@ def scan():
 
     for coin in COINS:
         try:
-            # 4H candles
+            # ── 4H ──────────────────────────────
             closes_4h = get_candles(coin, "4h", 100)
             if len(closes_4h) < 30:
                 print(f"❌ No 4H data: {coin}")
                 continue
             rsis_4h = get_rsi_series(closes_4h)
-            _, hidden_4h = detect_divergence(closes_4h[-20:], rsis_4h[-20:])
+            regular_4h, hidden_4h = detect_divergence(closes_4h[-20:], rsis_4h[-20:])
 
-            # 1H candles
-            closes_1h = get_candles(coin, "1h", 100)
-            if len(closes_1h) < 30:
-                print(f"❌ No 1H data: {coin}")
-                continue
-            rsis_1h = get_rsi_series(closes_1h)
-            regular_1h, _ = detect_divergence(closes_1h[-20:], rsis_1h[-20:])
+            if hidden_4h:
+                # 4H Hidden helay → 1H Regular eeg
+                closes_1h = get_candles(coin, "1h", 100)
+                if len(closes_1h) < 30: continue
+                rsis_1h = get_rsi_series(closes_1h)
+                regular_1h, _ = detect_divergence(closes_1h[-20:], rsis_1h[-20:])
+                candle_1h = candle_confirmation(closes_1h)
 
-            # 15M candles
-            closes_15m = get_candles(coin, "15m", 100)
-            if len(closes_15m) < 30:
-                print(f"❌ No 15M data: {coin}")
-                continue
-            rsis_15m = get_rsi_series(closes_15m)
-            regular_15m, _ = detect_divergence(closes_15m[-20:], rsis_15m[-20:])
-            candle_15m = candle_confirmation(closes_15m)
+                if regular_1h and candle_1h:
+                    msg = (
+                        f"⚡ <b>SIGNAL HELAY!</b>\n\n"
+                        f"🪙 <b>{coin}</b>\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"✅ 4H Hidden Bullish Div\n"
+                        f"✅ 1H Regular Bullish Div\n"
+                        f"✅ 1H Candle Confirmation\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"💰 Price: ${closes_4h[-1]:,.4f}\n"
+                        f"📊 RSI 4H: {rsis_4h[-1]:.1f}\n"
+                        f"📊 RSI 1H: {rsis_1h[-1]:.1f}\n"
+                        f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                    )
+                    send_telegram(msg)
+                    print(f"✅ Signal [4H Hidden + 1H Regular]: {coin}")
+                    time.sleep(1)
+                    continue
 
-            print(f"➖ {coin} | Hidden4H={hidden_4h} | Regular1H={regular_1h} | Regular15M={regular_15m} | Candle={candle_15m}")
+                # 1H Regular waayay → 15M Regular eeg
+                closes_15m = get_candles(coin, "15m", 100)
+                if len(closes_15m) < 30: continue
+                rsis_15m = get_rsi_series(closes_15m)
+                regular_15m, _ = detect_divergence(closes_15m[-20:], rsis_15m[-20:])
+                candle_15m = candle_confirmation(closes_15m)
 
-            # Signal: 4H Hidden + (1H ama 15M Regular) + Candle
-            if hidden_4h and (regular_1h or regular_15m) and candle_15m:
-                tf_label = "1H" if regular_1h else "15M"
-                msg = (
-                    f"⚡ <b>SIGNAL HELAY!</b>\n\n"
-                    f"🪙 <b>{coin}</b>\n"
-                    f"━━━━━━━━━━━━━━\n"
-                    f"✅ 4H Hidden Bullish Div\n"
-                    f"✅ {tf_label} Regular Bullish Div\n"
-                    f"✅ 15M Candle Confirmation\n"
-                    f"━━━━━━━━━━━━━━\n"
-                    f"💰 Price: ${closes_4h[-1]:,.4f}\n"
-                    f"📊 RSI 4H: {rsis_4h[-1]:.1f}\n"
-                    f"📊 RSI 1H: {rsis_1h[-1]:.1f}\n"
-                    f"📊 RSI 15M: {rsis_15m[-1]:.1f}\n"
-                    f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-                )
-                send_telegram(msg)
-                print(f"✅ Signal: {coin}")
+                if regular_15m and candle_15m:
+                    msg = (
+                        f"⚡ <b>SIGNAL HELAY!</b>\n\n"
+                        f"🪙 <b>{coin}</b>\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"✅ 4H Hidden Bullish Div\n"
+                        f"✅ 15M Regular Bullish Div\n"
+                        f"✅ 15M Candle Confirmation\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"💰 Price: ${closes_4h[-1]:,.4f}\n"
+                        f"📊 RSI 4H: {rsis_4h[-1]:.1f}\n"
+                        f"📊 RSI 15M: {rsis_15m[-1]:.1f}\n"
+                        f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                    )
+                    send_telegram(msg)
+                    print(f"✅ Signal [4H Hidden + 15M Regular]: {coin}")
+                    time.sleep(1)
+                    continue
+
+            else:
+                # ── 4H Hidden waayay → 1H Hidden eeg ──
+                closes_1h = get_candles(coin, "1h", 100)
+                if len(closes_1h) < 30: continue
+                rsis_1h = get_rsi_series(closes_1h)
+                regular_1h, hidden_1h = detect_divergence(closes_1h[-20:], rsis_1h[-20:])
+
+                if hidden_1h:
+                    # 1H Hidden helay → 15M Regular eeg
+                    closes_15m = get_candles(coin, "15m", 100)
+                    if len(closes_15m) < 30: continue
+                    rsis_15m = get_rsi_series(closes_15m)
+                    regular_15m, _ = detect_divergence(closes_15m[-20:], rsis_15m[-20:])
+                    candle_15m = candle_confirmation(closes_15m)
+
+                    if regular_15m and candle_15m:
+                        msg = (
+                            f"⚡ <b>SIGNAL HELAY!</b>\n\n"
+                            f"🪙 <b>{coin}</b>\n"
+                            f"━━━━━━━━━━━━━━\n"
+                            f"✅ 1H Hidden Bullish Div\n"
+                            f"✅ 15M Regular Bullish Div\n"
+                            f"✅ 15M Candle Confirmation\n"
+                            f"━━━━━━━━━━━━━━\n"
+                            f"💰 Price: ${closes_1h[-1]:,.4f}\n"
+                            f"📊 RSI 1H: {rsis_1h[-1]:.1f}\n"
+                            f"📊 RSI 15M: {rsis_15m[-1]:.1f}\n"
+                            f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                        )
+                        send_telegram(msg)
+                        print(f"✅ Signal [1H Hidden + 15M Regular]: {coin}")
+                        time.sleep(1)
+                        continue
+
+                    # 15M Regular waayay → 5M Regular eeg
+                    closes_5m = get_candles(coin, "5m", 100)
+                    if len(closes_5m) < 30: continue
+                    rsis_5m = get_rsi_series(closes_5m)
+                    regular_5m, _ = detect_divergence(closes_5m[-20:], rsis_5m[-20:])
+                    candle_5m = candle_confirmation(closes_5m)
+
+                    if regular_5m and candle_5m:
+                        msg = (
+                            f"⚡ <b>SIGNAL HELAY!</b>\n\n"
+                            f"🪙 <b>{coin}</b>\n"
+                            f"━━━━━━━━━━━━━━\n"
+                            f"✅ 1H Hidden Bullish Div\n"
+                            f"✅ 5M Regular Bullish Div\n"
+                            f"✅ 5M Candle Confirmation\n"
+                            f"━━━━━━━━━━━━━━\n"
+                            f"💰 Price: ${closes_1h[-1]:,.4f}\n"
+                            f"📊 RSI 1H: {rsis_1h[-1]:.1f}\n"
+                            f"📊 RSI 5M: {rsis_5m[-1]:.1f}\n"
+                            f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                        )
+                        send_telegram(msg)
+                        print(f"✅ Signal [1H Hidden + 5M Regular]: {coin}")
+                        time.sleep(1)
+                        continue
+
+                else:
+                    # ── 1H Hidden waayay → 15M Hidden eeg ──
+                    closes_15m = get_candles(coin, "15m", 100)
+                    if len(closes_15m) < 30: continue
+                    rsis_15m = get_rsi_series(closes_15m)
+                    regular_15m, hidden_15m = detect_divergence(closes_15m[-20:], rsis_15m[-20:])
+
+                    if hidden_15m:
+                        # 15M Hidden helay → 5M Regular eeg
+                        closes_5m = get_candles(coin, "5m", 100)
+                        if len(closes_5m) < 30: continue
+                        rsis_5m = get_rsi_series(closes_5m)
+                        regular_5m, _ = detect_divergence(closes_5m[-20:], rsis_5m[-20:])
+                        candle_5m = candle_confirmation(closes_5m)
+
+                        if regular_5m and candle_5m:
+                            msg = (
+                                f"⚡ <b>SIGNAL HELAY!</b>\n\n"
+                                f"🪙 <b>{coin}</b>\n"
+                                f"━━━━━━━━━━━━━━\n"
+                                f"✅ 15M Hidden Bullish Div\n"
+                                f"✅ 5M Regular Bullish Div\n"
+                                f"✅ 5M Candle Confirmation\n"
+                                f"━━━━━━━━━━━━━━\n"
+                                f"💰 Price: ${closes_15m[-1]:,.4f}\n"
+                                f"📊 RSI 15M: {rsis_15m[-1]:.1f}\n"
+                                f"📊 RSI 5M: {rsis_5m[-1]:.1f}\n"
+                                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                            )
+                            send_telegram(msg)
+                            print(f"✅ Signal [15M Hidden + 5M Regular]: {coin}")
+                        else:
+                            print(f"➖ {coin} | 15M Hidden helay lkn 5M Regular waayay")
+                    else:
+                        print(f"➖ {coin} | Signal ma jiro")
 
             time.sleep(1)
 
