@@ -3,7 +3,7 @@ import time
 from datetime import datetime
 
 # ── CONFIG ──────────────────────────────────────────
-TELEGRAM_TOKEN = "8210009776:AAHC3we-Jxu6p7UVrIf6SPrQLrVYqOA_yR8"
+TELEGRAM_TOKEN = "TOKEN_KAAGA_HALKAN_GELI"
 CHAT_ID = "6311790109"
 
 COINS = [
@@ -11,8 +11,6 @@ COINS = [
     "AVAXUSDT", "LINKUSDT", "INJUSDT", "ARBUSDT",
     "OPUSDT", "MATICUSDT"
 ]
-
-EXCHANGE = "BINANCE"
 
 # ── TELEGRAM ─────────────────────────────────────────
 def send_telegram(msg):
@@ -22,47 +20,57 @@ def send_telegram(msg):
     except Exception as e:
         print(f"Telegram error: {e}")
 
-# ── TRADINGVIEW DATA ──────────────────────────────────
-def get_data(symbol, exchange):
-    url = "https://scanner.tradingview.com/crypto/scan"
-    columns = [
-        "close", "close[1]", "close[2]", "close[3]", "close[4]",
-        "close[5]", "close[6]", "close[7]", "close[8]", "close[9]",
-        "RSI", "RSI[1]", "RSI[2]", "RSI[3]", "RSI[4]",
-        "RSI[5]", "RSI[6]", "RSI[7]", "RSI[8]", "RSI[9]",
-    ]
-    body = {
-        "symbols": {"tickers": [f"{exchange}:{symbol}"], "query": {"types": []}},
-        "columns": columns
-    }
+# ── BINANCE API ───────────────────────────────────────
+def get_candles(symbol, interval, limit=50):
     try:
-        res = requests.post(url, json=body, timeout=15)
-        d = res.json()["data"][0]["d"]
-        closes = [x for x in reversed(d[0:10]) if x is not None]
-        rsis = [x for x in reversed(d[10:20]) if x is not None]
-        if len(closes) < 6 or len(rsis) < 6:
-            return [], []
-        return closes, rsis
+        url = f"https://api.binance.com/api/v3/klines"
+        params = {"symbol": symbol, "interval": interval, "limit": limit}
+        res = requests.get(url, params=params, timeout=15)
+        data = res.json()
+        closes = [float(c[4]) for c in data]
+        return closes
     except Exception as e:
-        print(f"Fetch error {symbol}: {e}")
-        return [], []
+        print(f"Binance error {symbol} {interval}: {e}")
+        return []
+
+# ── RSI ───────────────────────────────────────────────
+def calc_rsi(closes, period=14):
+    if len(closes) < period + 1:
+        return None
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        d = closes[i] - closes[i-1]
+        gains.append(max(d, 0))
+        losses.append(max(-d, 0))
+    avg_g = sum(gains[:period]) / period
+    avg_l = sum(losses[:period]) / period
+    for i in range(period, len(gains)):
+        avg_g = (avg_g * (period-1) + gains[i]) / period
+        avg_l = (avg_l * (period-1) + losses[i]) / period
+    if avg_l == 0:
+        return 100
+    return 100 - (100 / (1 + avg_g / avg_l))
+
+def get_rsi_series(closes, period=14):
+    rsi_list = []
+    for i in range(period, len(closes)):
+        rsi_list.append(calc_rsi(closes[:i+1], period))
+    return rsi_list
 
 # ── DIVERGENCE ────────────────────────────────────────
-def detect_divergence(closes, rsis):
+def detect_divergence(closes, rsis, lookback=10):
     try:
-        if len(closes) < 6 or len(rsis) < 6:
+        if len(closes) < lookback or len(rsis) < lookback:
             return False, False
 
-        half = len(closes) // 2
-        prev_closes = closes[:half]
-        curr_closes = closes[half:]
-        prev_rsis = rsis[:half]
-        curr_rsis = rsis[half:]
+        p = closes[-lookback:]
+        r = rsis[-lookback:]
+        half = lookback // 2
 
-        prev_low_p = min(prev_closes)
-        curr_low_p = min(curr_closes)
-        prev_low_r = min(prev_rsis)
-        curr_low_r = min(curr_rsis)
+        prev_low_p = min(p[:half])
+        curr_low_p = min(p[half:])
+        prev_low_r = min(r[:half])
+        curr_low_r = min(r[half:])
 
         # Regular Bullish: price LL, RSI HL
         regular = curr_low_p < prev_low_p and curr_low_r > prev_low_r
@@ -90,24 +98,28 @@ def scan():
 
     for coin in COINS:
         try:
-            # 4H data
-            closes_4h, rsis_4h = get_data(coin, EXCHANGE)
-            if not closes_4h:
+            # 4H candles
+            closes_4h = get_candles(coin, "4h", 100)
+            if len(closes_4h) < 30:
                 print(f"❌ No 4H data: {coin}")
                 continue
+            rsis_4h = get_rsi_series(closes_4h)
 
-            _, hidden_4h = detect_divergence(closes_4h, rsis_4h)
+            _, hidden_4h = detect_divergence(closes_4h[-20:], rsis_4h[-20:])
 
-            # 1H data
-            closes_1h, rsis_1h = get_data(coin, EXCHANGE)
-            if not closes_1h:
+            # 1H candles
+            closes_1h = get_candles(coin, "1h", 100)
+            if len(closes_1h) < 30:
                 print(f"❌ No 1H data: {coin}")
                 continue
+            rsis_1h = get_rsi_series(closes_1h)
 
-            regular_1h, _ = detect_divergence(closes_1h, rsis_1h)
+            regular_1h, _ = detect_divergence(closes_1h[-20:], rsis_1h[-20:])
             candle_1h = candle_confirmation(closes_1h)
 
-            # Strategy check
+            print(f"{'✅' if hidden_4h and regular_1h and candle_1h else '➖'} {coin} | Hidden4H={hidden_4h} | Regular1H={regular_1h} | Candle={candle_1h}")
+
+            # Signal found!
             if hidden_4h and regular_1h and candle_1h:
                 msg = (
                     f"⚡ <b>SIGNAL HELAY!</b>\n\n"
@@ -123,9 +135,6 @@ def scan():
                     f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
                 )
                 send_telegram(msg)
-                print(f"✅ Signal: {coin}")
-            else:
-                print(f"➖ No signal: {coin} | Hidden4H={hidden_4h} | Regular1H={regular_1h} | Candle={candle_1h}")
 
             time.sleep(1)
 
