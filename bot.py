@@ -3,7 +3,7 @@ import time
 from datetime import datetime
 
 # ── CONFIG ──────────────────────────────────────────
-TELEGRAM_TOKEN = "TOKEN_KAAGA_HALKAN_GELI"
+TELEGRAM_TOKEN = "8210009776:AAHC3we-Jxu6p7UVrIf6SPrQLrVYqOA_yR8"
 CHAT_ID = "6311790109"
 
 COINS = [
