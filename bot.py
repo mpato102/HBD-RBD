@@ -23,8 +23,9 @@ def send_telegram(msg):
 # ── BINANCE API ───────────────────────────────────────
 def get_candles(symbol, interval, limit=50):
     try:
-        interval_map = {"4h": "4h", "1h": "1h"}
-        url = f"https://api.mexc.com/api/v3/klines"
+        # MEXC interval format
+        interval_map = {"4h": "4h", "1h": "60m"}
+        url = "https://api.mexc.com/api/v3/klines"
         params = {
             "symbol": symbol,
             "interval": interval_map[interval],
