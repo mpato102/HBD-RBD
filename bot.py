@@ -24,7 +24,7 @@ def send_telegram(msg):
 def get_candles(symbol, interval, limit=50):
     try:
         # MEXC interval format
-        interval_map = {"4h": "4h", "1h": "60m"}
+        interval_map = {"4h": "4h", "1h": "60m", "15m": "15m"}
         url = "https://api.mexc.com/api/v3/klines"
         params = {
             "symbol": symbol,
@@ -113,7 +113,6 @@ def scan():
                 print(f"❌ No 4H data: {coin}")
                 continue
             rsis_4h = get_rsi_series(closes_4h)
-
             _, hidden_4h = detect_divergence(closes_4h[-20:], rsis_4h[-20:])
 
             # 1H candles
@@ -122,28 +121,38 @@ def scan():
                 print(f"❌ No 1H data: {coin}")
                 continue
             rsis_1h = get_rsi_series(closes_1h)
-
             regular_1h, _ = detect_divergence(closes_1h[-20:], rsis_1h[-20:])
-            candle_1h = candle_confirmation(closes_1h)
 
-            print(f"{'✅' if hidden_4h and regular_1h and candle_1h else '➖'} {coin} | Hidden4H={hidden_4h} | Regular1H={regular_1h} | Candle={candle_1h}")
+            # 15M candles
+            closes_15m = get_candles(coin, "15m", 100)
+            if len(closes_15m) < 30:
+                print(f"❌ No 15M data: {coin}")
+                continue
+            rsis_15m = get_rsi_series(closes_15m)
+            regular_15m, _ = detect_divergence(closes_15m[-20:], rsis_15m[-20:])
+            candle_15m = candle_confirmation(closes_15m)
 
-            # Signal found!
-            if hidden_4h and regular_1h and candle_1h:
+            print(f"➖ {coin} | Hidden4H={hidden_4h} | Regular1H={regular_1h} | Regular15M={regular_15m} | Candle={candle_15m}")
+
+            # Signal: 4H Hidden + (1H ama 15M Regular) + Candle
+            if hidden_4h and (regular_1h or regular_15m) and candle_15m:
+                tf_label = "1H" if regular_1h else "15M"
                 msg = (
                     f"⚡ <b>SIGNAL HELAY!</b>\n\n"
                     f"🪙 <b>{coin}</b>\n"
                     f"━━━━━━━━━━━━━━\n"
                     f"✅ 4H Hidden Bullish Div\n"
-                    f"✅ 1H Regular Bullish Div\n"
-                    f"✅ Candle Confirmation\n"
+                    f"✅ {tf_label} Regular Bullish Div\n"
+                    f"✅ 15M Candle Confirmation\n"
                     f"━━━━━━━━━━━━━━\n"
                     f"💰 Price: ${closes_4h[-1]:,.4f}\n"
                     f"📊 RSI 4H: {rsis_4h[-1]:.1f}\n"
                     f"📊 RSI 1H: {rsis_1h[-1]:.1f}\n"
+                    f"📊 RSI 15M: {rsis_15m[-1]:.1f}\n"
                     f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
                 )
                 send_telegram(msg)
+                print(f"✅ Signal: {coin}")
 
             time.sleep(1)
 
