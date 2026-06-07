@@ -35,27 +35,25 @@ def send_telegram(msg):
     except Exception as e:
         print(f"Telegram error: {e}")
 
-# ── BINANCE API ───────────────────────────────────────
-def get_candles(symbol, interval, limit=50):
+# ── CANDLES ───────────────────────────────────────────
+def get_candles(symbol, interval, limit=200):
     try:
-        # MEXC interval format
-        interval_map = {"4h": "4h", "1h": "60m", "15m": "15m", "5m": "5m"}
+        interval_map = {"1d": "1d", "4h": "4h", "1h": "60m", "15m": "15m", "5m": "5m"}
         url = "https://api.mexc.com/api/v3/klines"
-        params = {
-            "symbol": symbol,
-            "interval": interval_map[interval],
-            "limit": limit
-        }
+        params = {"symbol": symbol, "interval": interval_map[interval], "limit": limit}
         res = requests.get(url, params=params, timeout=15)
         data = res.json()
         if not isinstance(data, list):
             print(f"MEXC error {symbol}: {data}")
             return []
-        closes = [float(c[4]) for c in data]
-        return closes
+        return data
     except Exception as e:
         print(f"Fetch error {symbol} {interval}: {e}")
         return []
+
+def get_closes(symbol, interval, limit=200):
+    data = get_candles(symbol, interval, limit)
+    return [float(c[4]) for c in data]
 
 # ── RSI ───────────────────────────────────────────────
 def calc_rsi(closes, period=14):
@@ -82,7 +80,7 @@ def get_rsi_series(closes, period=14):
     return rsi_list
 
 # ── DIVERGENCE ────────────────────────────────────────
-def detect_divergence(closes, rsis, lookback=10):
+def detect_divergence(closes, rsis, lookback=40):
     try:
         if len(closes) < lookback or len(rsis) < lookback:
             return False, False
@@ -96,11 +94,15 @@ def detect_divergence(closes, rsis, lookback=10):
         prev_low_r = min(r[:half])
         curr_low_r = min(r[half:])
 
+        # Margin — been-ka yaree
+        margin_p = prev_low_p * 0.005
+        margin_r = 1.0
+
         # Regular Bullish: price LL, RSI HL
-        regular = curr_low_p < prev_low_p and curr_low_r > prev_low_r
+        regular = (curr_low_p < prev_low_p - margin_p) and (curr_low_r > prev_low_r + margin_r)
 
         # Hidden Bullish: price HL, RSI LL
-        hidden = curr_low_p > prev_low_p and curr_low_r < prev_low_r
+        hidden = (curr_low_p > prev_low_p + margin_p) and (curr_low_r < prev_low_r - margin_r)
 
         return regular, hidden
     except Exception as e:
@@ -116,26 +118,142 @@ def candle_confirmation(closes):
     except:
         return False
 
+# ── STRATEGY 2 — DAILY HIGH BREAK & RETEST ───────────
+def get_daily_prev_high(symbol):
+    try:
+        data = get_candles(symbol, "1d", 3)
+        if len(data) < 2:
+            return None
+        prev_high = float(data[-2][2])
+        return prev_high
+    except Exception as e:
+        print(f"Daily high error {symbol}: {e}")
+        return None
+
+def check_15m_break(symbol, daily_high):
+    try:
+        data = get_candles(symbol, "15m", 10)
+        if not data:
+            return False
+        last_close = float(data[-1][4])
+        return last_close > daily_high
+    except:
+        return False
+
+def check_5m_retest_and_candle(symbol, daily_high):
+    try:
+        data = get_candles(symbol, "5m", 20)
+        if len(data) < 3:
+            return False, False, None
+
+        zone_low = daily_high * 0.99
+        zone_high = daily_high * 1.01
+
+        retest_found = False
+        for candle in data[-5:]:
+            low = float(candle[3])
+            high = float(candle[2])
+            if low <= zone_high and high >= zone_low:
+                retest_found = True
+                break
+
+        if not retest_found:
+            return False, False, None
+
+        last = data[-1]
+        prev = data[-2]
+
+        o = float(last[1])
+        h = float(last[2])
+        l = float(last[3])
+        c = float(last[4])
+
+        prev_o = float(prev[1])
+        prev_c = float(prev[4])
+
+        body = abs(c - o)
+
+        bullish_engulfing = (
+            c > o and
+            prev_c < prev_o and
+            c > prev_o and
+            o < prev_c
+        )
+
+        lower_wick = o - l if c > o else c - l
+        upper_wick = h - c if c > o else h - o
+        hammer = (
+            c > o and
+            lower_wick >= body * 2 and
+            upper_wick <= body * 0.5
+        )
+
+        candle_confirmed = bullish_engulfing or hammer
+        candle_type = "Bullish Engulfing" if bullish_engulfing else "Hammer" if hammer else None
+
+        return retest_found, candle_confirmed, candle_type
+
+    except Exception as e:
+        print(f"Retest error {symbol}: {e}")
+        return False, False, None
+
+def scan_strategy2(coin):
+    try:
+        daily_high = get_daily_prev_high(coin)
+        if not daily_high:
+            return
+
+        broke = check_15m_break(coin, daily_high)
+        if not broke:
+            print(f"➖ [S2] {coin} | No 15M Break")
+            return
+
+        retest, candle_ok, candle_type = check_5m_retest_and_candle(coin, daily_high)
+
+        if retest and candle_ok:
+            closes_5m = get_closes(coin, "5m", 20)
+            msg = (
+                f"🔥 <b>STRATEGY 2 SIGNAL!</b>\n\n"
+                f"🪙 <b>{coin}</b>\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"✅ Daily Prev High: ${daily_high:,.4f}\n"
+                f"✅ 15M Break Confirmed\n"
+                f"✅ 5M Retest Zone (±1%)\n"
+                f"✅ {candle_type}\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"💰 Price: ${closes_5m[-1]:,.4f}\n"
+                f"📊 Zone: ${daily_high*0.99:,.4f} — ${daily_high*1.01:,.4f}\n"
+                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            )
+            send_telegram(msg)
+            print(f"✅ [S2] Signal: {coin} | {candle_type}")
+        elif retest and not candle_ok:
+            print(f"➖ [S2] {coin} | Retest helay lkn candle confirmation waayay")
+        else:
+            print(f"➖ [S2] {coin} | Break helay lkn retest waayay")
+
+    except Exception as e:
+        print(f"Error [S2] {coin}: {e}")
+
 # ── MAIN SCAN ─────────────────────────────────────────
 def scan():
     print(f"\n🔍 Scan bilaabanaya — {datetime.now().strftime('%H:%M:%S')}")
 
     for coin in COINS:
         try:
-            # ── 4H ──────────────────────────────
-            closes_4h = get_candles(coin, "4h", 100)
-            if len(closes_4h) < 30:
+            # ════ STRATEGY 1: RSI DIVERGENCE ════
+            closes_4h = get_closes(coin, "4h", 200)
+            if len(closes_4h) < 50:
                 print(f"❌ No 4H data: {coin}")
                 continue
             rsis_4h = get_rsi_series(closes_4h)
-            regular_4h, hidden_4h = detect_divergence(closes_4h[-20:], rsis_4h[-20:])
+            regular_4h, hidden_4h = detect_divergence(closes_4h[-40:], rsis_4h[-40:])
 
             if hidden_4h:
-                # 4H Hidden helay → 1H Regular eeg
-                closes_1h = get_candles(coin, "1h", 100)
-                if len(closes_1h) < 30: continue
+                closes_1h = get_closes(coin, "1h", 200)
+                if len(closes_1h) < 50: continue
                 rsis_1h = get_rsi_series(closes_1h)
-                regular_1h, _ = detect_divergence(closes_1h[-20:], rsis_1h[-20:])
+                regular_1h, _ = detect_divergence(closes_1h[-40:], rsis_1h[-40:])
                 candle_1h = candle_confirmation(closes_1h)
 
                 if regular_1h and candle_1h:
@@ -153,15 +271,14 @@ def scan():
                         f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
                     )
                     send_telegram(msg)
-                    print(f"✅ Signal [4H Hidden + 1H Regular]: {coin}")
+                    print(f"✅ [S1] Signal [4H Hidden + 1H Regular]: {coin}")
                     time.sleep(1)
                     continue
 
-                # 1H Regular waayay → 15M Regular eeg
-                closes_15m = get_candles(coin, "15m", 100)
-                if len(closes_15m) < 30: continue
+                closes_15m = get_closes(coin, "15m", 200)
+                if len(closes_15m) < 50: continue
                 rsis_15m = get_rsi_series(closes_15m)
-                regular_15m, _ = detect_divergence(closes_15m[-20:], rsis_15m[-20:])
+                regular_15m, _ = detect_divergence(closes_15m[-40:], rsis_15m[-40:])
                 candle_15m = candle_confirmation(closes_15m)
 
                 if regular_15m and candle_15m:
@@ -179,23 +296,21 @@ def scan():
                         f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
                     )
                     send_telegram(msg)
-                    print(f"✅ Signal [4H Hidden + 15M Regular]: {coin}")
+                    print(f"✅ [S1] Signal [4H Hidden + 15M Regular]: {coin}")
                     time.sleep(1)
                     continue
 
             else:
-                # ── 4H Hidden waayay → 1H Hidden eeg ──
-                closes_1h = get_candles(coin, "1h", 100)
-                if len(closes_1h) < 30: continue
+                closes_1h = get_closes(coin, "1h", 200)
+                if len(closes_1h) < 50: continue
                 rsis_1h = get_rsi_series(closes_1h)
-                regular_1h, hidden_1h = detect_divergence(closes_1h[-20:], rsis_1h[-20:])
+                regular_1h, hidden_1h = detect_divergence(closes_1h[-40:], rsis_1h[-40:])
 
                 if hidden_1h:
-                    # 1H Hidden helay → 15M Regular eeg
-                    closes_15m = get_candles(coin, "15m", 100)
-                    if len(closes_15m) < 30: continue
+                    closes_15m = get_closes(coin, "15m", 200)
+                    if len(closes_15m) < 50: continue
                     rsis_15m = get_rsi_series(closes_15m)
-                    regular_15m, _ = detect_divergence(closes_15m[-20:], rsis_15m[-20:])
+                    regular_15m, _ = detect_divergence(closes_15m[-40:], rsis_15m[-40:])
                     candle_15m = candle_confirmation(closes_15m)
 
                     if regular_15m and candle_15m:
@@ -213,15 +328,14 @@ def scan():
                             f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
                         )
                         send_telegram(msg)
-                        print(f"✅ Signal [1H Hidden + 15M Regular]: {coin}")
+                        print(f"✅ [S1] Signal [1H Hidden + 15M Regular]: {coin}")
                         time.sleep(1)
                         continue
 
-                    # 15M Regular waayay → 5M Regular eeg
-                    closes_5m = get_candles(coin, "5m", 100)
-                    if len(closes_5m) < 30: continue
+                    closes_5m = get_closes(coin, "5m", 200)
+                    if len(closes_5m) < 50: continue
                     rsis_5m = get_rsi_series(closes_5m)
-                    regular_5m, _ = detect_divergence(closes_5m[-20:], rsis_5m[-20:])
+                    regular_5m, _ = detect_divergence(closes_5m[-40:], rsis_5m[-40:])
                     candle_5m = candle_confirmation(closes_5m)
 
                     if regular_5m and candle_5m:
@@ -239,23 +353,21 @@ def scan():
                             f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
                         )
                         send_telegram(msg)
-                        print(f"✅ Signal [1H Hidden + 5M Regular]: {coin}")
+                        print(f"✅ [S1] Signal [1H Hidden + 5M Regular]: {coin}")
                         time.sleep(1)
                         continue
 
                 else:
-                    # ── 1H Hidden waayay → 15M Hidden eeg ──
-                    closes_15m = get_candles(coin, "15m", 100)
-                    if len(closes_15m) < 30: continue
+                    closes_15m = get_closes(coin, "15m", 200)
+                    if len(closes_15m) < 50: continue
                     rsis_15m = get_rsi_series(closes_15m)
-                    regular_15m, hidden_15m = detect_divergence(closes_15m[-20:], rsis_15m[-20:])
+                    regular_15m, hidden_15m = detect_divergence(closes_15m[-40:], rsis_15m[-40:])
 
                     if hidden_15m:
-                        # 15M Hidden helay → 5M Regular eeg
-                        closes_5m = get_candles(coin, "5m", 100)
-                        if len(closes_5m) < 30: continue
+                        closes_5m = get_closes(coin, "5m", 200)
+                        if len(closes_5m) < 50: continue
                         rsis_5m = get_rsi_series(closes_5m)
-                        regular_5m, _ = detect_divergence(closes_5m[-20:], rsis_5m[-20:])
+                        regular_5m, _ = detect_divergence(closes_5m[-40:], rsis_5m[-40:])
                         candle_5m = candle_confirmation(closes_5m)
 
                         if regular_5m and candle_5m:
@@ -273,11 +385,14 @@ def scan():
                                 f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
                             )
                             send_telegram(msg)
-                            print(f"✅ Signal [15M Hidden + 5M Regular]: {coin}")
+                            print(f"✅ [S1] Signal [15M Hidden + 5M Regular]: {coin}")
                         else:
                             print(f"➖ {coin} | 15M Hidden helay lkn 5M Regular waayay")
                     else:
                         print(f"➖ {coin} | Signal ma jiro")
+
+            # ════ STRATEGY 2: DAILY HIGH BREAK & RETEST ════
+            scan_strategy2(coin)
 
             time.sleep(1)
 
