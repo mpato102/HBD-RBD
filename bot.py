@@ -405,4 +405,4 @@ if __name__ == "__main__":
     while True:
         scan()
         print("⏳ waa inoo 4 saac kadib...")
-        time.sleep(900)
+        time.sleep(300)
